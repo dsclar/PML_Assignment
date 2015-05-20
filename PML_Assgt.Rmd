@@ -1,0 +1,166 @@
+---
+title: "PML_Assgt - Weight lifting exersises qualitative classification prediction"
+author: "ACRL"
+date: "Thursday, May 14, 2015"
+output:
+  html_document:
+    fig_caption: yes
+    keep_md: yes
+---
+
+
+###Summary
+This analysis used the data from Ugulino et al. (2013) that quantified how well 6 healthy young male subjects lifted a dumbbell. The intention is to provide a model-based framework to improve how a physical activity is performed. The goal is to apply such framework to other applications involving physical/sport oriented activities, provide instant feedback to the user, and ultimately improve health. 
+The purpose was to classify and predict the five different fashions the subjects executed the lifting exercise on the basis of data recorded from on-body sensors at the arm, forearm, belt and dumbbell. Five  classes, "A" =correct execution to specification, B-E = mistakes, were to be predicted. 
+After removing irrelevant predictors, Principal Component Analysis was performed to reduce dimensionality. "Random Forest" yielded the most accurate model with 10-fold cross-validation (>97% accuracy with 2.8% out of sample estimated error). This model was 100% accurate on the testing set. This suggested that the feature selection done by Ugulino et al. (2013) and Velloso et al. (2013) was apt to capture the body motion components involved in weight lifting, and therefore could be used to provide feedback to the user. 
+
+###Cleaning & Preparation  
+```{r prep, cache=TRUE}
+setwd("C:/Users/Anne-Catherine/Documents/Practical Machine Learning")
+#Reading training file
+pml_training=read.csv("pml-training.csv")
+#summary(pml_training)
+#Reading test file
+pml_test= read.csv("pml-testing.csv")
+
+library(ggplot2); library(caret); library(gridExtra); library(dplyr)
+#cleaning data: Removing irrelevant predictors, "kurtosis", "skewness"
+pml_training1=select(pml_training, -c(grep("kurtosis_", names(pml_training))))
+pml_training1=select(pml_training1, -c(grep("skewness_", names(pml_training1))))
+pml_test1=select(pml_test, -c(grep("kurtosis_", names(pml_test))))
+pml_test1=select(pml_test1, -c(grep("skewness_", names(pml_test1))))
+
+# Two attribute configurations from training and testing files: 1) raw data; 2) summary statistics data
+#summary(pml_training1)
+#1) Raw data
+#Raw data training file = "pml_training2"
+pml_training2=select(pml_training1, -c(grep("max_", names(pml_training1))))
+pml_training2=select(pml_training2, -c(grep("min_", names(pml_training2))))
+pml_training2=select(pml_training2, -c(grep("amplitude_", names(pml_training2))))
+pml_training2=select(pml_training2, -c(grep("var_total_", names(pml_training2))))
+pml_training2=select(pml_training2, -c(grep("avg_", names(pml_training2))))
+pml_training2=select(pml_training2, -c(grep("stddev_", names(pml_training2))))
+pml_training2=select(pml_training2, -c(grep("var_", names(pml_training2))))
+pml_training2=pml_training2[pml_training2$new_window=="no",]
+#write.table(pml_training2, file="pml_training2.txt", row.names=F, sep="\t")
+pml_training2=select(pml_training2, -c(1, 6))
+
+##Raw data test file = "pml_test2"
+pml_test2=select(pml_test1, -c(grep("max_", names(pml_test1))))
+pml_test2=select(pml_test2, -c(grep("min_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(grep("amplitude_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(grep("var_total_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(grep("avg_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(grep("stddev_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(grep("var_", names(pml_test2))))
+pml_test2=select(pml_test2, -c(1, 6))
+
+#2) summary statistics file = "pml_training_stat"
+pml_training_stat=pml_training1[pml_training1$new_window=="yes",]
+```
+
+Only the raw data attribute configuration for the training and test sets was used. 
+
+###Partition of "pml_training2" to create a validation set
+```{r Partition, cache=TRUE}
+#Partition "pml_training2" into training and validation sets
+set.seed(100)
+inTrain <- createDataPartition(y=pml_training2$classe,
+                              p=0.66, list=FALSE)
+pml_training_set <- pml_training2[inTrain,]
+pml_validation_set <- pml_training2[-inTrain,]
+```
+
+### Test for colinearity between numeric predictors
+```{r colinearity, cache=TRUE}
+M = abs(cor(pml_training_set[,6:57]))
+diag(M) = 0
+HighCorr=which(M > 0.8,arr.ind=T)
+```
+
+There were `r dim(HighCorr)[1]` variables correlated at 0.8 or higher.
+Hence the Principal Components Analysis was performed as the next step to retain most informative predictors and reduce dimensionality of the data.
+Twenty components (pcaComp=20) were retained from the 53 numeric raw predictors in the training data set = "pml_training-set" and were applied to the validation and test sets.
+
+### Principal Component Analysis
+```{r pca, cache=TRUE}
+preProc <- preProcess(pml_training_set[,6:57], method="pca", pcaComp=20)
+trainProc <- predict(preProc,pml_training_set[,6:57])
+
+# Apply Principal Component Analysis to Validation set
+testVal <- predict(preProc,pml_validation_set[,6:57])
+
+#Apply Principal Component Analysis to test set 
+testing <- predict(preProc,pml_test2[,6:57])
+```
+
+Then, model fitting was performed using a decision tree, method="rpart" from the "caret" package with 10-fold cross-validation, on the training set to classify and predict the manner in which the 6 study participants lifted a dumbbell.
+
+###Model fitting: decision Tree using "rpart" with 10-fold cross-validation 
+```{r tree, cache=TRUE}
+set.seed(3)
+modelFitT = train(pml_training_set$classe ~ ., method="rpart", data=trainProc, trControl=trainControl(method="cv", number=10))
+modelFitT$finalModel
+
+#Plot decision tree
+library(rattle)
+fancyRpartPlot(modelFitT$finalModel)
+```
+
+
+
+Accuracy was respectively for the 3 metrics retained in the model, `r round(modelFitT$results$Accuracy, 2)`, i.e., below 40%.
+
+Hence, in order to improve accuracy and lower the out of sample estimated error, model fitting was performed using "random forest" from the "caret" package with 10-fold cross-validation, as the next step.
+
+###Model fitting: decision tree using "rf" with 10-fold cross-validation 
+```{r random forest, cache=TRUE}
+set.seed(2)
+modelFitRF = train(pml_training_set$classe ~ ., method="rf", data=trainProc, trControl=trainControl(method="cv", number=10))
+modelFitRF$finalModel
+```
+
+Accuracy was respectively `r modelFitRF$results$Accuracy`, above 95%. The out of sample error was low at 2.8%.
+
+Hence, this model was retained to make predictions on the validation set. 
+
+###Predictions on validation set using "random forest"
+```{r prediction, cache=TRUE}
+pred = predict(modelFitRF,testVal); pml_validation_set$predRight = pred==pml_validation_set$classe
+Confusion_Matrix=table(pred,pml_validation_set$classe)
+valAccuracy=sum(diag(Confusion_Matrix))/(nrow(pml_validation_set))
+```
+
+The accuracy was `r valAccuracy` in line with the estimated error of 2.8% on the training set.
+
+Predictions were then performed on the test set using the same model "modelFitRF". 
+
+###Predictions on test set using "random forest"
+```{r predict_test, cache=TRUE}
+predTest = predict(modelFitRF,testing)
+pml_test2$predTestRight = as.character(predTest)
+```
+
+###Submitting predictions for 20 individual cases
+```{r submission, echo=FALSE, cache=TRUE}
+answers=as.character(predTest)
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+pml_write_files(answers)
+```
+
+Rate of accuracy using "modelFitRF" , as decribed above, was 100% on the 20 observations of the test set.
+
+###References
+1. Ugulino, W.; Cardador, D.; Vega, K.; Velloso, E.; Milidiu, R.; Fuks, H. Wearable Computing: Accelerometers' Data Classification of Body Postures and Movements. Proceedings of 21st Brazilian Symposium on Artificial Intelligence. Advances in Artificial Intelligence - SBIA 2012. In: Lecture Notes in Computer Science. , pp. 52-61. Curitiba, PR: Springer Berlin / Heidelberg, 2012. ISBN 978-3-642-34458-9. DOI: 10.1007/978-3-642-34459-6_6. 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3abz6AeXf
+
+2. Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3abzW9LUs
